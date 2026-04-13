@@ -1,0 +1,26 @@
+# ── Learning Agent dependencies (original, unchanged) ────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+vaderSentiment==3.3.2
+scikit-learn==1.4.2
+numpy==1.26.4
+httpx==0.27.0
+pytest==8.2.0
+requests==2.31.0
+
+# ── Conversation Agent dependencies (new interface layer) ─────────────────────
+# LLM backends
+ollama                      # Ollama Python client (optional — can use raw requests)
+groq                        # Groq cloud API client (optional, for --groq backend)
+
+# Audio (only needed when running with voice mode; safe to omit for API-only)
+pyaudio; sys_platform != "darwin"   # Linux / Windows
+pyaudio; sys_platform == "darwin"   # macOS (may need portaudio via brew)
+faster-whisper                      # local Whisper STT
+edge-tts                            # Microsoft Edge TTS (online)
+pyttsx3                             # offline TTS fallback
+pygame                              # audio playback
+
+# Async helpers (edge-tts uses asyncio)
+anyio>=3.0
