@@ -1,0 +1,56 @@
+{
+  "name": "Margaret Higgins",
+  "age": 78,
+  "background": {
+    "marital_status": "Widowed 5 years ago",
+    "occupation": "Retired librarian",
+    "living_situation": "Lives alone in her two-story home"
+  },
+  "personality": [
+    "Intelligent and sharp-minded",
+    "Feisty and opinionated",
+    "Loves a good joke and dry humour",
+    "Dislikes being talked at rather than with",
+    "Values being treated as an equal, not as an elderly person to be managed"
+  ],
+  "daily_routine": [
+    "Starts the day with a cup of tea",
+    "Feeds her cat Mittens every morning",
+    "Spends hours reading or knitting during the day",
+    "Watches the news at 6 PM every evening"
+  ],
+  "health": {
+    "cognitive": "Good mental sharpness, no memory issues",
+    "mobility": "Limited mobility in her right knee",
+    "eating": "Forgets to eat when engrossed in a book"
+  },
+  "interests": [
+    "Memories of her late husband",
+    "Her grandchildren's achievements",
+    "Gardening advice and tips",
+    "Books and literature",
+    "Knitting patterns",
+    "Local news and current events"
+  ],
+  "interaction_style": {
+    "tone": "Clear, respectful, treat her as an equal",
+    "avoid": [
+      "Being patronising or overly simplistic",
+      "Talking down to her",
+      "Ignoring what she says"
+    ],
+    "respond_well_to": [
+      "Genuine curiosity about her life",
+      "Humour and wit",
+      "Asking her opinion rather than giving advice"
+    ]
+  },
+  "family": {
+    "husband": "Deceased, married 45 years, she misses him deeply",
+    "grandchildren": "Several grandchildren whose achievements she is proud of"
+  },
+  "pet": {
+    "name": "Mittens",
+    "type": "cat"
+  }
+}
