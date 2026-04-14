@@ -14,9 +14,13 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+import io
+import threading
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel as _BaseModel
 
 # ── Learning Agent (black-box imports — DO NOT MODIFY) ───────────────────────
 from learning_agent.schemas import (
@@ -169,6 +173,59 @@ def _run_learning_pipeline(req: AnalyseRequest) -> AnalyseResponse:
     )
 
 
+# ── TTS ───────────────────────────────────────────────────────────────────────
+
+class TTSRequest(_BaseModel):
+    text: str
+    voice: str = "bf_emma"
+    backend: str = "kokoro"   # "kokoro" | "edge"
+    speed: float = 0.9        # slightly slower for elderly users
+
+
+# Lazy-loaded Kokoro pipelines, one per lang_code ('a' American, 'b' British)
+_kokoro_lock: threading.Lock       = threading.Lock()
+_kokoro_pipelines: dict[str, object] = {}
+
+
+def _get_kokoro_pipeline(lang_code: str):
+    with _kokoro_lock:
+        if lang_code not in _kokoro_pipelines:
+            from kokoro import KPipeline
+            log.info("[tts] Loading Kokoro pipeline (lang_code=%s)…", lang_code)
+            _kokoro_pipelines[lang_code] = KPipeline(lang_code=lang_code)
+        return _kokoro_pipelines[lang_code]
+
+
+def _kokoro_sync(text: str, voice: str, speed: float) -> io.BytesIO:
+    """Run Kokoro TTS synchronously — called via thread executor."""
+    import numpy as np
+    import soundfile as sf
+
+    lang_code = "b" if voice.startswith("b") else "a"
+    pipeline  = _get_kokoro_pipeline(lang_code)
+
+    chunks: list = []
+    for _, _, audio in pipeline(text, voice=voice, speed=speed):
+        chunks.append(audio)
+
+    buf = io.BytesIO()
+    if chunks:
+        sf.write(buf, np.concatenate(chunks), 24000, format="WAV")
+        buf.seek(0)
+    return buf
+
+
+async def _tts_edge(req: TTSRequest) -> StreamingResponse:
+    import edge_tts
+    communicate = edge_tts.Communicate(req.text, req.voice)
+    buf = io.BytesIO()
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            buf.write(chunk["data"])
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="audio/mpeg")
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=FileResponse, include_in_schema=False)
@@ -180,6 +237,19 @@ def ui():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "ELARA Unified", "version": "2.1.0"}
+
+
+@app.post("/tts", include_in_schema=False)
+async def tts(req: TTSRequest):
+    """Text-to-speech via Kokoro (local/offline) or Edge TTS (online)."""
+    if req.backend == "edge":
+        return await _tts_edge(req)
+    # Kokoro is CPU-bound — run in thread pool to avoid blocking the event loop
+    import asyncio
+    buf = await asyncio.get_event_loop().run_in_executor(
+        None, _kokoro_sync, req.text, req.voice, req.speed
+    )
+    return StreamingResponse(buf, media_type="audio/wav")
 
 
 @app.post("/analyse", response_model=AnalyseResponse)

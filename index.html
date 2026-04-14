@@ -777,9 +777,20 @@
       </select>
       <label>Voice</label>
       <select id="voiceSelect">
-        <option value="">Browser TTS</option>
-        <option value="en-GB-SoniaNeural">Sonia (UK)</option>
-        <option value="en-US-JennyNeural">Jenny (US)</option>
+        <optgroup label="Kokoro — Local">
+          <option value="kokoro:bf_emma" selected>Emma · British F</option>
+          <option value="kokoro:bf_isabella">Isabella · British F</option>
+          <option value="kokoro:bf_alice">Alice · British F</option>
+          <option value="kokoro:bf_lily">Lily · British F</option>
+          <option value="kokoro:bm_george">George · British M</option>
+          <option value="kokoro:bm_daniel">Daniel · British M</option>
+          <option value="kokoro:af_heart">Heart · American F</option>
+          <option value="kokoro:af_bella">Bella · American F</option>
+        </optgroup>
+        <optgroup label="Edge TTS — Online">
+          <option value="edge:en-GB-SoniaNeural">Sonia · British F</option>
+          <option value="edge:en-US-JennyNeural">Jenny · American F</option>
+        </optgroup>
       </select>
       <button class="btn-connect" onclick="testConnection()">Test connection</button>
     </div>
@@ -861,8 +872,7 @@ let isSpeaking    = false;
 let mediaRecorder = null;
 let audioChunks   = [];
 let recognition   = null;
-let synth         = window.speechSynthesis;
-let currentUtterance = null;
+let currentAudio  = null;
 
 const ACTION_NAMES = {
   0: 'DO_NOTHING', 1: 'DEC_CLARITY', 2: 'DEC_PACE',
@@ -1163,50 +1173,50 @@ function stopRecording() {
 
 // ── Audio: Text-to-Speech (TTS) ───────────────────────────────────────────────
 
-function speakReply(text) {
-  if (!text || !synth) return;
+async function speakReply(text) {
+  if (!text) return;
 
-  // Cancel any current speech
-  if (synth.speaking) synth.cancel();
+  // Stop any currently playing audio
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
 
-  const utterance  = new SpeechSynthesisUtterance(text);
-  currentUtterance = utterance;
+  const voiceVal = document.getElementById('voiceSelect').value || 'kokoro:bf_emma';
+  const colonIdx = voiceVal.indexOf(':');
+  const backend  = voiceVal.slice(0, colonIdx);
+  const voice    = voiceVal.slice(colonIdx + 1);
+  const url      = document.getElementById('apiUrl').value.trim();
 
-  // Choose voice: prefer a calm female English voice
-  const voices = synth.getVoices();
-  const preferred = voices.find(v =>
-    v.lang.startsWith('en') && v.name.toLowerCase().includes('female')
-  ) || voices.find(v =>
-    v.lang.startsWith('en-GB')
-  ) || voices.find(v =>
-    v.lang.startsWith('en')
-  );
-  if (preferred) utterance.voice = preferred;
+  isSpeaking = true;
+  setAudioStatus('ELARA is speaking…', 'speaking');
 
-  utterance.rate   = 0.88;  // slightly slower for elderly users
-  utterance.pitch  = 1.0;
-  utterance.volume = 1.0;
+  try {
+    const resp = await fetch(`${url}/tts`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text, voice, backend }),
+    });
+    if (!resp.ok) throw new Error(`TTS ${resp.status}`);
 
-  utterance.onstart = () => {
-    isSpeaking = true;
-    setAudioStatus('ELARA is speaking…', 'speaking');
-  };
+    const blob     = await resp.blob();
+    const audioUrl = URL.createObjectURL(blob);
+    currentAudio   = new Audio(audioUrl);
 
-  utterance.onend = () => {
+    currentAudio.onplay  = () => setAudioStatus('ELARA is speaking…', 'speaking');
+    currentAudio.onended = () => {
+      isSpeaking = false;
+      setAudioStatus('', '');
+      URL.revokeObjectURL(audioUrl);
+      currentAudio = null;
+    };
+    currentAudio.onerror = () => {
+      isSpeaking = false;
+      setAudioStatus('', '');
+      currentAudio = null;
+    };
+
+    await currentAudio.play();
+  } catch (e) {
     isSpeaking = false;
     setAudioStatus('', '');
-  };
-
-  utterance.onerror = () => {
-    isSpeaking = false;
-    setAudioStatus('', '');
-  };
-
-  // Load voices asynchronously if not yet available
-  if (voices.length === 0) {
-    synth.onvoiceschanged = () => { synth.speak(utterance); };
-  } else {
-    synth.speak(utterance);
   }
 }
 
@@ -1219,7 +1229,7 @@ function setAudioStatus(msg, cls) {
 // ── Keyboard shortcut: Escape stops speech ────────────────────────────────────
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (synth && synth.speaking) { synth.cancel(); setAudioStatus('', ''); }
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; isSpeaking = false; setAudioStatus('', ''); }
     if (isRecording) stopRecording();
   }
 });

@@ -24,3 +24,7 @@ pygame                              # audio playback
 
 # Async helpers (edge-tts uses asyncio)
 anyio>=3.0
+
+# Kokoro TTS (local, offline high-quality TTS)
+kokoro                              # Kokoro-82M neural TTS
+soundfile                           # WAV encoding for Kokoro output
