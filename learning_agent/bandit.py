@@ -1,23 +1,23 @@
 """
-Layer 3 — Contextual Bandit with UCB1
+Layer 3 — Discounted LinUCB Contextual Bandit
 
-Tables:
-  N[ctx][action]  — visit counts   (45 × 7)
-  Q[ctx][action]  — average reward (45 × 7)
+Per-action matrices (7 actions × 7 features):
+  A[a]  — 7×7 covariance matrix   (init: identity)
+  b[a]  — 7×1 reward-weighted feature vector (init: zeros)
 
-Context ID encoding (from state_classifier):
-  affect_idx (0-4) × 9  +  clarity_idx (0-2) × 3  +  pace_idx (0-2)
-  → 0..44  (45 unique contexts)
+Feature vector (7D, built by state_classifier.encode_context_features):
+  [ One-Hot Affect (5D) | clarity_level (1D) | pace_value (1D) ]
 
-  Affect index mapping:
-    0 = frustrated
-    1 = confused
-    2 = sad
-    3 = calm
-    4 = disengaged
+  Affect one-hot positions:
+    0 = frustrated, 1 = confused, 2 = sad, 3 = calm, 4 = disengaged
 
-Cold-start: if N[ctx] is all-zero, action selection falls back to
-rule-based defaults (see RULE_BASED_DEFAULTS).
+Selection:  θ[a] = A[a]⁻¹·b[a];  score = θᵀx + α√(xᵀA⁻¹x)
+Update:     A[a] = γ·A[a] + (1−γ)·I + x·xᵀ;  b[a] = γ·b[a] + r·x
+
+Cold-start: when A is identity and b is zero, UCB exploration bonus
+dominates, so the bandit explores uniformly until it has data.
+Rule-based defaults (RULE_BASED_DEFAULTS) are used as tie-breakers
+when the bandit has no learned preference.
 """
 
 from __future__ import annotations
@@ -52,8 +52,6 @@ SAD_ALLOWED_ACTIONS = {0, 4}   # DO_NOTHING, ENABLE_PATIENCE
 # affect_idx for calm and sad (used in guards below)
 _CALM_IDX = AFFECT_MAP["calm"]   # 3
 _SAD_IDX  = AFFECT_MAP["sad"]    # 2
-
-GAMMA = 0.99  # decay factor — tune this per deployment
 
 class LinUCBBandit:
     def __init__(self, A: np.ndarray, b: np.ndarray, alpha: float = 1.0, gamma: float = 0.99):
