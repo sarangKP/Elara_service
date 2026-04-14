@@ -139,6 +139,11 @@ def _run_learning_pipeline(req: AnalyseRequest) -> AnalyseResponse:
             reward_applied = reward
 
         action_id, ucb_scores = bandit.select_action(curr_features)
+
+        # IMPORTANT: LinUCBBandit.__init__ copies the arrays, so mutations
+        # inside bandit.update() / select_action() only affect the bandit's
+        # internal copies.  We must copy the learned state back into the
+        # original arrays so that tables_locked().__exit__ persists them.
         A[:] = bandit.A
         b[:] = bandit.b
 
@@ -263,3 +268,161 @@ def chat(req: ChatRequest) -> ChatResponse:
     """Stateless conversation turn."""
     adapter = ConversationAdapter()
     return adapter.handle_turn(req, _run_learning_pipeline)
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    """
+    SSE streaming variant of /chat.
+
+    Streams LLM tokens as they arrive so the edge device can begin TTS on
+    the first sentence while the LLM is still generating the rest.  The
+    final SSE event carries the full ChatResponse JSON (state + diagnostics)
+    so the caller can update session state exactly as with /chat.
+
+    Event types:
+        data: {"token": "Hello "}       — incremental LLM token
+        data: {"done": true, ...}       — final payload (ChatResponse JSON)
+    """
+    import json as _json
+    from conversation_agent.adapter import ConversationAdapter, ChatResponse as _CR
+
+    adapter = ConversationAdapter()
+
+    def _generate():
+        # --- Run the same pre-LLM pipeline as handle_turn ---
+        from datetime import datetime, timezone as _tz
+
+        state = req.state or adapter._new_session()
+        state.interaction_count += 1
+
+        ts = datetime.now(_tz.utc).isoformat()
+        from conversation_agent.adapter import (
+            ConversationTurn,
+            _POSITIVE_FEEDBACK_PATTERNS,
+            _IMMEDIATE_POSITIVE_REWARD,
+            _PACE_TOKENS,
+            _PERSONA,
+            ElaraConfig,
+            AdaptationDiagnostics,
+        )
+
+        state.history.append(
+            ConversationTurn(role="user", content=req.message, timestamp=ts)
+        )
+
+        # Immediate positive reward (same logic as adapter.handle_turn)
+        immediate_reward_applied = False
+        if (
+            _POSITIVE_FEEDBACK_PATTERNS.search(req.message)
+            and state.bandit.previous_action_id is not None
+            and state.bandit.previous_config is not None
+        ):
+            adapter._apply_immediate_reward(state, _IMMEDIATE_POSITIVE_REWARD)
+            immediate_reward_applied = True
+            state.bandit.previous_action_id = None
+
+        # Build & run Learning Agent
+        la_turns = adapter._history_to_la_turns(state.history)
+        la_config = adapter._config_to_la_config(state.config)
+        la_prev_config = (
+            adapter._config_to_la_config(state.bandit.previous_config)
+            if state.bandit.previous_config else None
+        )
+
+        from learning_agent.schemas import AnalyseRequest as _LAReq, ConversationWindow as _CW
+        la_req = _LAReq(
+            schema_version="1.1",
+            session_id=state.session_id,
+            conversation_window=_CW(turns=la_turns[-adapter.MAX_SERVICE_TURNS:]),
+            current_config=la_config,
+            previous_affect=state.bandit.previous_affect,
+            previous_action_id=state.bandit.previous_action_id,
+            previous_config=la_prev_config,
+            affect_window=state.bandit.affect_window[-5:],
+            interaction_count=state.interaction_count,
+        )
+
+        la_resp = _run_learning_pipeline(la_req)
+
+        # Update bandit tracking
+        state.bandit.previous_config = ElaraConfig(**state.config.model_dump())
+        state.bandit.previous_affect = la_resp.inferred_state.affect
+        state.bandit.previous_action_id = la_resp.bandit_context.action_id
+        state.bandit.previous_context_id = la_resp.bandit_context.context_id
+        state.bandit.affect_window = (
+            state.bandit.affect_window + [la_resp.inferred_state.affect]
+        )[-5:]
+
+        # Distress watchdog
+        caregiver_alert = False
+        if la_resp.inferred_state.affect == "calm":
+            state.consecutive_distress_turns = 0
+        else:
+            state.consecutive_distress_turns += 1
+        caregiver_alert = adapter._check_distress_watchdog(state)
+
+        # Apply config delta
+        if la_resp.config_delta.apply and la_resp.config_delta.changes:
+            for k, v in la_resp.config_delta.changes.items():
+                if hasattr(state.config, k):
+                    setattr(state.config, k, v)
+
+        # Build system prompt & messages
+        from conversation_agent.rag import build_persona_prompt
+        config_dict = state.config.model_dump()
+        system_prompt = build_persona_prompt(_PERSONA, req.message, config_dict)
+
+        messages = [{"role": "system", "content": system_prompt}]
+        for turn in state.history[-(adapter.MAX_HISTORY_TURNS * 2):]:
+            llm_role = "assistant" if turn.role == "assistant" else "user"
+            messages.append({"role": llm_role, "content": turn.content})
+
+        max_tokens = _PACE_TOKENS.get(state.config.pace, 300)
+
+        # --- Stream LLM tokens as SSE events ---
+        from conversation_agent.llm import stream_response
+        reply_parts = []
+        try:
+            for chunk in stream_response(
+                messages,
+                backend=req.backend,
+                model=req.model,
+                max_tokens=max_tokens,
+            ):
+                reply_parts.append(chunk)
+                yield f"data: {_json.dumps({'token': chunk})}\n\n"
+        except Exception as exc:
+            log.error("LLM stream failed: %s", exc)
+            fallback = "I'm sorry, I'm having a little trouble thinking right now. Please try again."
+            reply_parts = [fallback]
+            yield f"data: {_json.dumps({'token': fallback})}\n\n"
+
+        reply = "".join(reply_parts)
+
+        # Append to history & trim
+        state.history.append(
+            ConversationTurn(role="assistant", content=reply, timestamp=ts)
+        )
+        if len(state.history) > adapter.MAX_HISTORY_TURNS * 2:
+            state.history = state.history[-(adapter.MAX_HISTORY_TURNS * 2):]
+
+        # Build final diagnostics payload
+        diag = AdaptationDiagnostics(
+            affect=la_resp.inferred_state.affect,
+            confidence=la_resp.inferred_state.confidence,
+            signals_used=la_resp.inferred_state.signals_used,
+            config_changes=la_resp.config_delta.changes,
+            reward_applied=la_resp.diagnostics.reward_applied,
+            ucb_action_id=la_resp.bandit_context.action_id,
+            ucb_scores=la_resp.diagnostics.ucb_scores,
+            escalation_rule=la_resp.inferred_state.escalation_rule_applied,
+            distress_turns=state.consecutive_distress_turns,
+            caregiver_alert=caregiver_alert,
+            immediate_reward_applied=immediate_reward_applied,
+        )
+
+        final = _CR(reply=reply, state=state, diagnostics=diag)
+        yield f"data: {_json.dumps({'done': True, **_json.loads(final.model_dump_json())})}\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")

@@ -55,14 +55,16 @@ def _stream_ollama(messages: list[dict], model: str, max_tokens: int):
 
 def _stream_groq(messages: list[dict], model: str, max_tokens: int):
     from groq import Groq
-    import winreg
 
     api_key = os.environ.get("GROQ_API_KEY")
 
     # Fall back to reading directly from the Windows user environment registry
-    # (needed when the key was set after the current shell session started)
+    # (needed when the key was set after the current shell session started).
+    # The winreg import is inside the try block because it only exists on
+    # Windows — importing it at function scope crashes on Linux/macOS.
     if not api_key:
         try:
+            import winreg
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                 r"Environment") as key:
                 api_key, _ = winreg.QueryValueEx(key, "GROQ_API_KEY")

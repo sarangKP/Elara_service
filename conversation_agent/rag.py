@@ -147,6 +147,7 @@ def build_persona_prompt(persona: dict, user_message: str, elara_config: dict) -
     clarity = elara_config.get("clarity_level", 2)
     patience = elara_config.get("patience_mode", False)
     confirmation = elara_config.get("confirmation_frequency", "low")
+    pace = elara_config.get("pace", "normal")
 
     clarity_note = {
         1: "Use simple, short sentences.",
@@ -154,7 +155,13 @@ def build_persona_prompt(persona: dict, user_message: str, elara_config: dict) -
         3: "You can be conversational and detailed.",
     }.get(clarity, "")
 
-    config_notes = [clarity_note]
+    pace_note = {
+        "slow": "Speak slowly and gently. Use short sentences with pauses between ideas. One thought at a time.",
+        "normal": "",
+        "fast": "Be brief and to the point.",
+    }.get(pace, "")
+
+    config_notes = [clarity_note, pace_note]
     if patience:
         config_notes.append(f"Open with a warm, empathetic acknowledgement of how {name} is feeling.")
     if confirmation == "high":
@@ -172,7 +179,8 @@ def build_persona_prompt(persona: dict, user_message: str, elara_config: dict) -
 class ConversationCache:
     """
     Keeps the last N turns of conversation for the LLM context window.
-    Also stores a summary of older turns for long-session continuity.
+    Older turns are silently evicted (FIFO).  Summarisation of evicted
+    turns is not yet implemented — planned for a future release.
     """
 
     def __init__(self, max_turns: int = 10):

@@ -167,6 +167,13 @@ class ConversationAdapter:
                 _IMMEDIATE_POSITIVE_REWARD,
                 state.session_id,
             )
+            # FIX #1-double-reward: Null out previous_action_id so the
+            # normal pipeline reward update (app.py _run_learning_pipeline)
+            # skips its bandit.update() call for this turn.  Without this,
+            # the same (prev_features, prev_action_id) pair receives two
+            # updates — the immediate +1.0 here AND the affect-transition
+            # reward — inflating the bandit's estimate of the action.
+            state.bandit.previous_action_id = None
 
         # ── 3. Build Learning Agent request ───────────────────────────────
         la_turns      = self._history_to_la_turns(state.history)
