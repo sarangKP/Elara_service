@@ -15,3 +15,4 @@ npm-debug.log*
 tables/
 logs/
 .claude/
+**/ .claude/
