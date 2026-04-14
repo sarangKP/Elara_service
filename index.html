@@ -323,6 +323,19 @@
     border-bottom-right-radius: var(--radius-sm);
   }
 
+  /* Blinking cursor shown while tokens are still streaming in */
+  .msg-bubble.streaming::after {
+    content: '▋';
+    display: inline-block;
+    color: var(--sage-dark);
+    animation: blink 0.8s step-start infinite;
+    margin-left: 1px;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+  }
+
   .msg-time {
     font-family: var(--font-ui);
     font-size: 10px;
@@ -955,28 +968,93 @@ async function sendMessage(text) {
   const backend = document.getElementById('backendSelect').value;
 
   try {
-    const resp = await fetch(`${url}/chat`, {
+    const resp = await fetch(`${url}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg, state: sessionState, backend }),
     });
 
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
 
+    // Show the ELARA bubble immediately so tokens stream into it
     showTyping(false);
-    sessionState = data.state;
+    const bubble = appendStreamingBubble();
 
-    appendMessage('elara', data.reply);
-    updateSidebar(data);
-    processAlerts(data);
-    speakReply(data.reply);
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE lines are separated by \n; double-\n ends each event
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // hold back any incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (!raw) continue;
+
+        let evt;
+        try { evt = JSON.parse(raw); } catch { continue; }
+
+        if (evt.token !== undefined) {
+          // Append each token as it arrives and keep the view scrolled down
+          bubble.textContent += evt.token;
+          scrollToBottom();
+        } else if (evt.done) {
+          // Final event — update state and sidebar exactly as before
+          sessionState = evt.state;
+          finalizeStreamingBubble(bubble);
+          updateSidebar({ diagnostics: evt.diagnostics, state: evt.state });
+          processAlerts({ diagnostics: evt.diagnostics, state: evt.state });
+          speakReply(evt.reply);
+        }
+      }
+    }
 
   } catch (e) {
     showTyping(false);
     appendMessage('elara', "I'm sorry — I had trouble connecting to the service. Please try again.");
     addWarning('caregiver', 'Request failed', e.message, true);
   }
+}
+
+// Create an ELARA message row with an empty bubble and return the bubble element.
+// Tokens are written directly into it as they stream in.
+function appendStreamingBubble() {
+  const list   = document.getElementById('chatMessages');
+  const wrap   = document.createElement('div');
+  wrap.className = 'msg elara';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = 'E';
+
+  const inner  = document.createElement('div');
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble streaming';
+
+  inner.appendChild(bubble);
+  wrap.appendChild(avatar);
+  wrap.appendChild(inner);
+  list.appendChild(wrap);
+  scrollToBottom();
+  return bubble;
+}
+
+// Called once the done event arrives — adds the timestamp and removes the
+// streaming cursor style.
+function finalizeStreamingBubble(bubble) {
+  bubble.classList.remove('streaming');
+  const time = document.createElement('div');
+  time.className = 'msg-time';
+  time.textContent = now();
+  bubble.parentElement.appendChild(time);
 }
 
 // ── Append message ──────────────────────────────────────────────────────────
