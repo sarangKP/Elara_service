@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Environment & Data
+.env
+*.json
+!session_elara-*.json  # Only if you want to keep session logs, otherwise ignore them
+
+tables/
+logs/
