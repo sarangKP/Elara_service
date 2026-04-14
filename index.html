@@ -964,7 +964,7 @@ async function sendMessage(text) {
 
   } catch (e) {
     showTyping(false);
-    appendMessage('elara', 'I'm sorry — I had trouble connecting to the service. Please try again.');
+    appendMessage('elara', "I'm sorry — I had trouble connecting to the service. Please try again.");
     addWarning('caregiver', 'Request failed', e.message, true);
   }
 }

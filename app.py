@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 # ── Learning Agent (black-box imports — DO NOT MODIFY) ───────────────────────
 from learning_agent.schemas import (
@@ -169,6 +170,12 @@ def _run_learning_pipeline(req: AnalyseRequest) -> AnalyseResponse:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=FileResponse, include_in_schema=False)
+def ui():
+    """Serve the ELARA companion UI."""
+    return FileResponse("index.html", media_type="text/html")
+
 
 @app.get("/health")
 def health():
